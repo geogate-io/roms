@@ -24,7 +24,7 @@
 !  the cdeps/cmeps system:                                             !
 !                                                                      !
 !                                                                      !
-!    ROMS_SetServices        Sets ROMS component shared-object entry   !
+!    SetServices             Sets ROMS component shared-object entry   !
 !                            points using NUPOC generic methods for    !
 !                            "initialize", "run", and "finalize".      !
 !                                                                      !
@@ -102,6 +102,7 @@
 # endif
      &    NUOPC_Label_SetClock       => label_SetClock,                 &
      &    NUOPC_Label_CheckImport    => label_CheckImport
+      USE NUOPC_Model, ONLY : SetVM
 !
 !-----------------------------------------------------------------------
 !  ROMS module association: parameters, variables, derived-type objects.
@@ -447,7 +448,8 @@
       character (len=256) :: ScalarFieldName
 !
 !-----------------------------------------------------------------------
-      PUBLIC  :: ROMS_SetServices
+      PUBLIC  :: SetServices
+      PUBLIC  :: SetVM
 !-----------------------------------------------------------------------
 !
       PRIVATE :: ROMS_Create
@@ -486,7 +488,7 @@
       CONTAINS
 !-----------------------------------------------------------------------
 !
-      SUBROUTINE ROMS_SetServices (model, rc)
+      SUBROUTINE SetServices (model, rc)
 !
 !=======================================================================
 !                                                                      !
@@ -504,14 +506,14 @@
 !  Local variable declarations.
 !
       character (len=*), parameter :: MyFile =                          &
-     &  __FILE__//", ROMS_SetServices"
+     &  __FILE__//", SetServices"
 !
 !-----------------------------------------------------------------------
 !  Initialize return code flag to success state (no error).
 !-----------------------------------------------------------------------
 !
       IF (ESM_track) THEN
-        WRITE (trac,'(a,a,i0)') '==> Entering ROMS_SetServices',        &
+        WRITE (trac,'(a,a,i0)') '==> Entering SetServices',             &
      &                          ', PET', PETrank
         FLUSH (trac)
       END IF
@@ -663,13 +665,13 @@
       END IF
 !
       IF (ESM_track) THEN
-        WRITE (trac,'(a,a,i0)') '<== Exiting  ROMS_SetServices',        &
+        WRITE (trac,'(a,a,i0)') '<== Exiting  SetServices',             &
      &                          ', PET', PETrank
         FLUSH (trac)
       END IF
 !
       RETURN
-      END SUBROUTINE ROMS_SetServices
+      END SUBROUTINE SetServices
 !
       SUBROUTINE ROMS_Create (localPET, PETcount, MyComm, rc)
 !
@@ -2068,19 +2070,11 @@
 !
       integer :: LBi, UBi, LBj, UBj
       integer :: MyComm
-      integer :: ng, is, localPET, PETcount, tile
+      integer :: ng, localPET, PETcount, tile
 !
-      real (dp) :: driverDuration, romsDuration
-!
-      character (len=20) :: TimeStartString
-      character (len=20) :: TimeStopString
-
       character (len=*), parameter :: MyFile =                          &
      &  __FILE__//", ROMS_SetInitializeP2"
 !
-      TYPE (ESMF_TimeInterval) :: RunDuration, TimeStep
-      TYPE (ESMF_Time)         :: CurrTime, startTime, stopTime
-      TYPE (ESMF_CalKind_Flag) :: calkindflag
       TYPE (ESMF_VM)           :: vm
 !
 !-----------------------------------------------------------------------
@@ -2159,6 +2153,186 @@
         END IF
       END IF
 # endif
+!
+!-----------------------------------------------------------------------
+!  Set-up grid and load coordinate data.
+!-----------------------------------------------------------------------
+!
+      DO ng=1,MODELS(Iroms)%Ngrids
+        IF (ANY(COUPLED(Iroms)%LinkedGrid(ng,:))) THEN
+          CALL ROMS_SetGridArrays (ng, tile, model, rc)
+          IF (ESMF_LogFoundError(rcToCheck=rc,                          &
+     &                           msg=ESMF_LOGERR_PASSTHRU,              &
+     &                           line=__LINE__,                         &
+     &                           file=MyFile)) THEN
+            RETURN
+          END IF
+        END IF
+      END DO
+!
+!-----------------------------------------------------------------------
+!  Set-up fields and register to import/export states.
+!-----------------------------------------------------------------------
+!
+      DO ng=1,MODELS(Iroms)%Ngrids
+        IF (ANY(COUPLED(Iroms)%LinkedGrid(ng,:))) THEN
+          CALL ROMS_SetStates (ng, tile, model, rc)
+          IF (ESMF_LogFoundError(rcToCheck=rc,                          &
+     &                           msg=ESMF_LOGERR_PASSTHRU,              &
+     &                           line=__LINE__,                         &
+     &                           file=MyFile)) THEN
+            RETURN
+          END IF
+        END IF
+      END DO
+!
+      IF (ESM_track) THEN
+        WRITE (trac,'(a,a,i0)') '<== Exiting  ROMS_SetInitializeP2',    &
+     &                          ', PET', PETrank
+        FLUSH (trac)
+      END IF
+!
+      RETURN
+      END SUBROUTINE ROMS_SetInitializeP2
+!
+      SUBROUTINE ROMS_DataInit (model, rc)
+!
+!=======================================================================
+!                                                                      !
+!  Exports ROMS component fields during initialization or restart.     !
+!                                                                      !
+!=======================================================================
+!
+!  Imported variable declarations.
+!
+      integer, intent(out) :: rc
+!
+      TYPE (ESMF_GridComp) :: model
+!
+!  Local variable declarations.
+!
+      integer :: ng
+!
+      character (len=*), parameter :: MyFile =                          &
+     &  __FILE__//", ROMS_DataInit"
+!
+      TYPE (ESMF_Time)  :: CurrentTime
+!
+!-----------------------------------------------------------------------
+!  Initialize return code flag to success state (no error).
+!-----------------------------------------------------------------------
+!
+      IF (ESM_track) THEN
+        WRITE (trac,'(a,a,i0)') '==> Entering ROMS_DataInit',           &
+     &                          ', PET', PETrank
+        FLUSH (trac)
+      END IF
+      rc=ESMF_SUCCESS
+!
+!-----------------------------------------------------------------------
+!  Export initialization or restart fields.
+!-----------------------------------------------------------------------
+!
+      IF (Nexport(Iroms).gt.0) THEN
+        DO ng=1,MODELS(Iroms)%Ngrids
+          IF (ANY(COUPLED(Iroms)%LinkedGrid(ng,:))) THEN
+            CALL ROMS_Export (ng, model, rc)
+            IF (ESMF_LogFoundError(rcToCheck=rc,                        &
+     &                             msg=ESMF_LOGERR_PASSTHRU,            &
+     &                             line=__LINE__,                       &
+     &                             file=MyFile)) THEN
+              RETURN
+            END IF
+          END IF
+        END DO
+      END IF
+!
+      IF (ESM_track) THEN
+        WRITE (trac,'(a,a,i0)') '<== Exiting  ROMS_DataInit',           &
+     &                          ', PET', PETrank
+        FLUSH (trac)
+      END IF
+!
+      RETURN
+      END SUBROUTINE ROMS_DataInit
+!
+      SUBROUTINE ROMS_SetClock (model, rc)
+!
+!=======================================================================
+!                                                                      !
+!  Sets ROMS component date calendar, start and stop time, and         !
+!  coupling interval.  At initilization, the variable "tdays" is       !
+!  the initial time meassured in fractional days since the reference   !
+!  time.                                                               !
+!                                                                      !
+!=======================================================================
+!
+!  Imported variable declarations.
+!
+      integer, intent(out) :: rc
+!
+      TYPE (ESMF_GridComp) :: model
+!
+!  Local variable declarations.
+!
+      integer :: ng, is
+      integer :: ref_year,   start_year,   stop_year
+      integer :: ref_month,  start_month,  stop_month
+      integer :: ref_day,    start_day,    stop_day
+      integer :: ref_hour,   start_hour,   stop_hour
+      integer :: ref_minute, start_minute, stop_minute
+      integer :: ref_second, start_second, stop_second
+      integer :: PETcount, localPET
+      integer :: TimeFrac
+!
+      real(dp) :: MyStartTime, MyStopTime
+!
+      character (len=22)  :: Calendar
+      character (len=22)  :: StartTimeString, StopTimeString
+      character (len=20)  :: TimeStartString
+      character (len=20)  :: TimeStopString
+      character (len=160) :: message
+!
+      TYPE (ESMF_TimeInterval) :: RunDuration, TimeStep
+      TYPE (ESMF_Time)         :: CurrTime, startTime, stopTime
+      TYPE (ESMF_CalKind_Flag) :: calkindflag
+!
+      real (dp) :: driverDuration, romsDuration
+!
+      character (len=*), parameter :: MyFile =                          &
+     &  __FILE__//", ROMS_SetClock"
+!
+      TYPE (ESMF_CalKind_Flag) :: CalType
+      TYPE (ESMF_Clock)        :: clock
+      TYPE (ESMF_VM)           :: vm
+!
+!-----------------------------------------------------------------------
+!  Initialize return code flag to success state (no error).
+!-----------------------------------------------------------------------
+!
+      IF (ESM_track) THEN
+        WRITE (trac,'(a,a,i0)') '==> Entering ROMS_SetClock',           &
+     &                          ', PET', PETrank
+        FLUSH (trac)
+      END IF
+      rc=ESMF_SUCCESS
+!
+!-----------------------------------------------------------------------
+!  Query the Virtual Machine (VM) parallel environmemt for the MPI
+!  communicator handle and current node rank.
+!-----------------------------------------------------------------------
+!
+      CALL ESMF_GridCompGet (model,                                     &
+     &                       localPet=localPET,                         &
+     &                       petCount=PETcount,                         &
+     &                       vm=vm,                                     &
+     &                       rc=rc)
+      IF (ESMF_LogFoundError(rcToCheck=rc,                              &
+     &                       msg=ESMF_LOGERR_PASSTHRU,                  &
+     &                       line=__LINE__,                             &
+     &                       file=MyFile)) THEN
+        RETURN
+      END IF
 !
 !-----------------------------------------------------------------------
 !  Query driver clock.
@@ -2253,6 +2427,9 @@
         END IF
 # endif
 !
+        IF (localPET.eq.0) PRINT*, "romsDuration   = ", romsDuration
+	IF (localPET.eq.0) PRINT*, "driverDuration = ", driverDuration
+!
         DO ng=1,MODELS(Iroms)%Ngrids
           IF (ANY(COUPLED(Iroms)%LinkedGrid(ng,:))) THEN
             romsDuration=(ntend(ng)-ntfirst(ng)+1)*dt(ng)
@@ -2266,210 +2443,6 @@
             END IF
           END IF
         END DO
-      END IF
-!
-!  Report Clock:
-!
-      IF (localPET.eq.0) THEN
-        WRITE (cplout,20) TimeStartString, TimeStopString,              &
-     &                    INT(driverDuration), INT(romsDuration)
-      END IF
-!
-!-----------------------------------------------------------------------
-!  Set-up grid and load coordinate data.
-!-----------------------------------------------------------------------
-!
-      DO ng=1,MODELS(Iroms)%Ngrids
-        IF (ANY(COUPLED(Iroms)%LinkedGrid(ng,:))) THEN
-          CALL ROMS_SetGridArrays (ng, tile, model, rc)
-          IF (ESMF_LogFoundError(rcToCheck=rc,                          &
-     &                           msg=ESMF_LOGERR_PASSTHRU,              &
-     &                           line=__LINE__,                         &
-     &                           file=MyFile)) THEN
-            RETURN
-          END IF
-        END IF
-      END DO
-!
-!-----------------------------------------------------------------------
-!  Set-up fields and register to import/export states.
-!-----------------------------------------------------------------------
-!
-      DO ng=1,MODELS(Iroms)%Ngrids
-        IF (ANY(COUPLED(Iroms)%LinkedGrid(ng,:))) THEN
-          CALL ROMS_SetStates (ng, tile, model, rc)
-          IF (ESMF_LogFoundError(rcToCheck=rc,                          &
-     &                           msg=ESMF_LOGERR_PASSTHRU,              &
-     &                           line=__LINE__,                         &
-     &                           file=MyFile)) THEN
-            RETURN
-          END IF
-        END IF
-      END DO
-!
-      IF (ESM_track) THEN
-        WRITE (trac,'(a,a,i0)') '<== Exiting  ROMS_SetInitializeP2',    &
-     &                          ', PET', PETrank
-        FLUSH (trac)
-      END IF
-!
-  10  FORMAT (/,' ROMS_SetInitializeP2 - inconsitent configuration ',   &
-     &        'run duration',/,24x,                                     &
-     &        'ROMS Duration     = ',f20.2,' seconds',/,24x,            &
-     &        'Coupling Duration = ',f20.2,' seconds',/,24x,            &
-     &        'Check paramenter NTIMES in ''',a,'''',a)
-  20  FORMAT (/,'Coupling Clock: ROMS_SetInitializeP2',/,15('='),/,     &
-     &        /,2x,'DRIVER Starting Date = ',a,                         &
-     &        /,2x,'DRIVER Ending   Date = ',a,                         &
-     &        /,2x,'DRIVER Duration (s)  = ',i0,                        &
-     &        /,2x,'ROMS   Duration (s)  = ',i0)
-!
-      RETURN
-      END SUBROUTINE ROMS_SetInitializeP2
-!
-      SUBROUTINE ROMS_DataInit (model, rc)
-!
-!=======================================================================
-!                                                                      !
-!  Exports ROMS component fields during initialization or restart.     !
-!                                                                      !
-!=======================================================================
-!
-!  Imported variable declarations.
-!
-      integer, intent(out) :: rc
-!
-      TYPE (ESMF_GridComp) :: model
-!
-!  Local variable declarations.
-!
-      integer :: ng
-!
-      character (len=*), parameter :: MyFile =                          &
-     &  __FILE__//", ROMS_DataInit"
-!
-      TYPE (ESMF_Time)  :: CurrentTime
-!
-!-----------------------------------------------------------------------
-!  Initialize return code flag to success state (no error).
-!-----------------------------------------------------------------------
-!
-      IF (ESM_track) THEN
-        WRITE (trac,'(a,a,i0)') '==> Entering ROMS_DataInit',           &
-     &                          ', PET', PETrank
-        FLUSH (trac)
-      END IF
-      rc=ESMF_SUCCESS
-!
-!-----------------------------------------------------------------------
-!  Get gridded component clock current time.
-!-----------------------------------------------------------------------
-!
-      CALL ESMF_ClockGet (ClockInfo(Iroms)%Clock,                       &
-     &                    currTime=CurrentTime,                         &
-     &                    rc=rc)
-      IF (ESMF_LogFoundError(rcToCheck=rc,                              &
-     &                       msg=ESMF_LOGERR_PASSTHRU,                  &
-     &                       line=__LINE__,                             &
-     &                       file=MyFile)) THEN
-        RETURN
-      END IF
-!
-!-----------------------------------------------------------------------
-!  Export initialization or restart fields.
-!-----------------------------------------------------------------------
-!
-      IF (Nexport(Iroms).gt.0) THEN
-        DO ng=1,MODELS(Iroms)%Ngrids
-          IF (ANY(COUPLED(Iroms)%LinkedGrid(ng,:))) THEN
-            CALL ROMS_Export (ng, model, rc)
-            IF (ESMF_LogFoundError(rcToCheck=rc,                        &
-     &                             msg=ESMF_LOGERR_PASSTHRU,            &
-     &                             line=__LINE__,                       &
-     &                             file=MyFile)) THEN
-              RETURN
-            END IF
-          END IF
-        END DO
-      END IF
-!
-      IF (ESM_track) THEN
-        WRITE (trac,'(a,a,i0)') '<== Exiting  ROMS_DataInit',           &
-     &                          ', PET', PETrank
-        FLUSH (trac)
-      END IF
-!
-      RETURN
-      END SUBROUTINE ROMS_DataInit
-!
-      SUBROUTINE ROMS_SetClock (model, rc)
-!
-!=======================================================================
-!                                                                      !
-!  Sets ROMS component date calendar, start and stop time, and         !
-!  coupling interval.  At initilization, the variable "tdays" is       !
-!  the initial time meassured in fractional days since the reference   !
-!  time.                                                               !
-!                                                                      !
-!=======================================================================
-!
-!  Imported variable declarations.
-!
-      integer, intent(out) :: rc
-!
-      TYPE (ESMF_GridComp) :: model
-!
-!  Local variable declarations.
-!
-      integer :: ng
-      integer :: ref_year,   start_year,   stop_year
-      integer :: ref_month,  start_month,  stop_month
-      integer :: ref_day,    start_day,    stop_day
-      integer :: ref_hour,   start_hour,   stop_hour
-      integer :: ref_minute, start_minute, stop_minute
-      integer :: ref_second, start_second, stop_second
-      integer :: PETcount, localPET
-      integer :: TimeFrac
-!
-      real(dp) :: MyStartTime, MyStopTime
-!
-      character (len= 22) :: Calendar
-      character (len= 22) :: StartTimeString, StopTimeString
-      character (len=160) :: message
-
-      character (len=*), parameter :: MyFile =                          &
-     &  __FILE__//", ROMS_SetClock"
-!
-      TYPE (ESMF_CalKind_Flag) :: CalType
-      TYPE (ESMF_Clock)        :: clock
-      TYPE (ESMF_VM)           :: vm
-!
-!-----------------------------------------------------------------------
-!  Initialize return code flag to success state (no error).
-!-----------------------------------------------------------------------
-!
-      IF (ESM_track) THEN
-        WRITE (trac,'(a,a,i0)') '==> Entering ROMS_SetClock',           &
-     &                          ', PET', PETrank
-        FLUSH (trac)
-      END IF
-      rc=ESMF_SUCCESS
-!
-!-----------------------------------------------------------------------
-!  Querry the Virtual Machine (VM) parallel environmemt for the MPI
-!  communicator handle and current node rank.
-!-----------------------------------------------------------------------
-!
-      CALL ESMF_GridCompGet (model,                                     &
-     &                       localPet=localPET,                         &
-     &                       petCount=PETcount,                         &
-     &                       vm=vm,                                     &
-     &                       rc=rc)
-      IF (ESMF_LogFoundError(rcToCheck=rc,                              &
-     &                       msg=ESMF_LOGERR_PASSTHRU,                  &
-     &                       line=__LINE__,                             &
-     &                       file=MyFile)) THEN
-        RETURN
       END IF
 !
 !-----------------------------------------------------------------------
