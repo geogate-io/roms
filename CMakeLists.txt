@@ -51,6 +51,7 @@ if( DEFINED ENV{ECBUILD_MODULE_PATH} )
 endif()
 
 project(roms VERSION 4.1 LANGUAGES Fortran)
+#set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -g")
 
 if( IN_ECBUILD )
   set( ECBUILD_DEFAULT_BUILD_TYPE Release )
